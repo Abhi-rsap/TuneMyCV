@@ -1,0 +1,17 @@
+# Ignore Python virtual environments
+**/app/TuneMyCV/*
+**/TuneMyCV/*
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore environment variables file
+.env
+
+# Ignore VSCode settings (optional if team-specific)
+.vscode/
+
+# macOS / Linux / Windows system files (optional)
+.DS_Store
+Thumbs.db

@@ -4,3 +4,4 @@ uvicorn
 bson
 pymongo
 python-docx
+pymupdf

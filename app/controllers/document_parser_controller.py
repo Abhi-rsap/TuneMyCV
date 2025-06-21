@@ -2,12 +2,13 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from app.services.document_parser_service import handle_document_upload
 
+
 router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
 
-@router.post("/upload", summary="Upload and parse a resume (Word document)")
+@router.post("/upload", summary="Upload, parse and store the resume (PDF)")
 async def upload_document(file: UploadFile = File(...)):
-    if not file.filename.endswith((".docx", ".doc")):
-        raise HTTPException(status_code=400, detail="Only .docx and .doc files are supported")
+    if not file.filename.endswith((".pdf")):
+        raise HTTPException(status_code=400, detail="Only .pdf files are supported")
 
     try:
         file_data = await file.read()

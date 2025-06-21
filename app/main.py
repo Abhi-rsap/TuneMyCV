@@ -5,6 +5,9 @@ from app.controllers import document_parser_controller
 
 
 app = FastAPI(title=config.project_name)
+@app.get("/")
+def root():
+    return {"message": f"{config.project_name} API is running."}
 app.include_router(document_parser_controller.router)
 
 

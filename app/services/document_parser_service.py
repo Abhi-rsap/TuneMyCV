@@ -1,60 +1,65 @@
-import io
-from docx import Document as DocxDocument
-from app.models.resume_model import Resume, ContactInfo
-from app.models.document_model import Document
 from pymongo import MongoClient
-from datetime import datetime, timezone
-from bson import ObjectId
-import re
+from app.models.Resume import Resume
+from app.utils.parse_resume import parse_resume
+from datetime import datetime
+import pytz
+from app.configs.config import timezone
+import logging
+from io import BytesIO
 
-# Set up MongoDB client
+
 client = MongoClient("mongodb://localhost:27017/")
+
+
 db = client.resume_bot
 collection = db.documents
+current_time_zone = pytz.timezone(timezone)
 
-def parse_word_document(file_data: bytes) -> Resume:
-    doc = DocxDocument(io.BytesIO(file_data))
-    
-    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-
-    contact_info = ContactInfo()
-    contact_info.name = paragraphs[0] if len(paragraphs) > 0 else ""
-    info = paragraphs[1].split("•")
-    for i in range(len(info)):
-        info[i] = info[i].strip()
-        if "@" in info[i]:
-            contact_info.email = info[i]
-        elif "linkedin" in info[i].lower():
-            contact_info.linkedin = info[i]
-        elif "github" in info[i].lower():
-            contact_info.github = info[i]
-        elif re.match(r"^\+?\d{10,15}$", info[i]):
-            contact_info.phone = info[i]
-
-
-    resume = Resume(
-        contact_information=contact_info,
-        summary="Hi this is Abhi",
-        education=[],
-        work_experience=[],
-        skills=[],
-        additonal_sections={}
-    )
-    return resume
 
 def save_document_to_db(title: str, resume_data: Resume, filename: str) -> dict:
-    document = Document(
-        title=title or filename,
-        content=resume_data,
-        uploaded_at=datetime.now(timezone.utc)
-    )
     
-    doc_dict = document.dict(by_alias=True)
-    
+    resume_data_dict = resume_data.model_dump()
+    doc_dict = {
+        "title": title,
+        "filename": filename,
+        "content": resume_data_dict,
+        "created_at": str(datetime.now(current_time_zone))
+    }
+
+    # Insert the document into the MongoDB collection
     result = collection.insert_one(doc_dict)
     doc_dict["_id"] = str(result.inserted_id)
+    if not result.acknowledged:
+        logging.error("Failed to save resume data to MongoDB.")
+        raise Exception("Failed to save resume data to MongoDB.")
+
+    logging.info("Resume data saved successfully to MongoDB.")
+
+
     return doc_dict
 
 def handle_document_upload(file_data: bytes, filename: str) -> dict:
-    resume_data = parse_word_document(file_data)
-    return save_document_to_db(resume_data.contact_information.full_name or "Untitled", resume_data, filename)
+    f = BytesIO(file_data)
+    parsed_data_json = parse_resume(f)
+    #Validate and parse the JSON data into a Resume model
+    if not parsed_data_json:
+        raise ValueError("Failed to parse resume data from the document")
+    try:
+        # parsed_data_json = parsed_data_json.model_dump()
+        resume_dict = Resume(**parsed_data_json)
+
+        logging.info("Validated resume data successfully.")
+        json_response = save_document_to_db(
+            title= resume_dict.header.split("\n")[0] if resume_dict.header else "Resume",
+            resume_data=resume_dict,
+            filename=filename
+        )
+
+
+        return json_response
+    except Exception as e:
+        raise ValueError(f"Error validating parsed data: {str(e)}")
+
+    
+    # return save_document_to_db(resume_data.contact_information.full_name or "Untitled", resume_data, filename)
+
