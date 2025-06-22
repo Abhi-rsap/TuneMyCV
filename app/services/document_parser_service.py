@@ -1,4 +1,3 @@
-from pymongo import MongoClient
 from app.models.Resume import Resume
 from app.utils.parse_resume import parse_resume
 from datetime import datetime
@@ -6,9 +5,10 @@ import pytz
 from app.configs.config import timezone
 import logging
 from io import BytesIO
+from motor.motor_asyncio import AsyncIOMotorClient
 
 
-client = MongoClient("mongodb://localhost:27017/")
+client = AsyncIOMotorClient("mongodb://localhost:27017/")
 
 
 db = client.resume_bot
@@ -39,6 +39,7 @@ def save_document_to_db(title: str, resume_data: Resume, filename: str) -> dict:
     return doc_dict
 
 def handle_document_upload(file_data: bytes, filename: str) -> dict:
+    
     f = BytesIO(file_data)
     parsed_data_json = parse_resume(f)
     #Validate and parse the JSON data into a Resume model

@@ -2,6 +2,7 @@ fastapi[standard]
 pydantic
 uvicorn
 bson
-pymongo
 python-docx
 pymupdf
+motor
+openai

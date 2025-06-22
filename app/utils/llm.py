@@ -2,40 +2,52 @@ from openai import OpenAI
 from jinja2 import Template
 import json
 import re
-from app.utils.parse_resume import parse_resume
-from pydantic import ValidationError
-from pydantic import BaseModel
-from typing import Optional
-from app.configs import timezone, OLLAMA_API_KEY, OLLAMA_BASE_URL
+from app.configs.config import ollama_api_key, ollama_base_url
 
 # Initialize Ollama client
 client = OpenAI(
-    base_url=OLLAMA_BASE_URL,
-    api_key=OLLAMA_API_KEY,
+    base_url=ollama_base_url,  # OLLAMA_BASE_URL
+    api_key=ollama_api_key  # OLLAMA_API_KEY
 )
 
 # Prompt template for tailoring
-def load_prompt_template():
-    return Template(
-        """You are a resume tailoring assistant.
+async def load_tailoring_prompt_template():
+    return Template("""
+You are an ATS optimization and resume tailoring expert.
 
-Given the following:
-1. A structured resume (JSON)
-2. A job description
+Your task is to revise the following structured resume JSON based on the provided job description. Your goal is to maximize ATS compatibility and match quality.
 
-Suggest tailored improvements to the resume to make it a better match for the job. Be specific: rewrite bullet points, reword the summary, suggest new skill keywords, and remove unrelated content if necessary.
+### Instructions:
 
-🚨 Return ONLY the tailored resume in valid JSON format. Do NOT include markdown, explanation, or comments.
+1. **Skills**
+   - Extract all hard and soft skills required by the job description.
+   - Retain only those skills from the resume that are relevant to the job.
+   - Add missing but **supported** skills from the job description that the candidate’s experience justifies.
+   - Use keyword phrasing as found in the job description (e.g., "Natural Language Processing" over "NLP" if the JD says so).
+
+2. **Summary**
+   - Rewrite the summary to align with the job description and the candidate's actual experience.
+   - Must contain **relevant keywords** from the JD.
+   - Limit to **350 characters**.
+   - Avoid subjective terms like “hardworking” or “passionate”. Be concise, factual, and role-aligned.
+
+3. **ATS Friendliness**
+   - Use standard JSON only — no markdown, no formatting.
+   - Avoid emojis, fancy characters, or non-standard section labels.
+   - Do not modify formatting or nesting — only replace values where necessary.
+
+🚨 Return **only the tailored resume JSON**. No explanation, comments, or extra text.
 
 Resume JSON:
 {{ resume }}
 
 Job Description:
-{{ jd }}"""
+{{ jd }}
+"""
     )
 
 # JSON OUTPUT FROM LLM
-def extract_json_from_llm(text: str) -> dict:
+async def extract_json_from_llm(text: str) -> dict:
     try:
         # Remove markdown ```json``` if present
         text = re.sub(r"```(json)?", "", text).strip()
@@ -62,8 +74,8 @@ def extract_json_from_llm(text: str) -> dict:
     return None
 
 # Generate tailored resume using llama
-def generate_response(resume_dict, jd_text, model_name="mistral"):
-    prompt_template = load_prompt_template()
+async def generate_response(resume_dict, jd_text, model_name="mistral"):
+    prompt_template = await load_tailoring_prompt_template()
     prompt = prompt_template.render(resume=json.dumps(resume_dict, indent=2), jd=jd_text)
 
     response = client.chat.completions.create(
@@ -73,29 +85,9 @@ def generate_response(resume_dict, jd_text, model_name="mistral"):
 
     result = response.choices[0].message.content
 
-    tailored_resume = extract_json_from_llm(result)
+    tailored_resume = await extract_json_from_llm(result)
     if not tailored_resume:
         print("❌ Failed to extract valid JSON from LLM response.")
         print(result)
         return None
     return tailored_resume
-
-# Load sample job description
-jd_text = open("app/etl/sample_jd.txt", "r").read()
-
-# Get tailored response from LLM
-llm_response = generate_response(resume_json, jd_text)
-
-if llm_response:
-    try:
-        # Validate with Pydantic
-        resume_obj = Resume(**llm_response)
-        tailored_resume = resume_obj.model_dump()
-        #Save
-        with open("app/etl/tailored_resume.json", "w") as f:
-            json.dump(tailored_resume, f, indent=2)
-    except ValidationError as e:
-        print("❌ LLM response did not match the expected structure.")
-        print(e)
-else:
-    print("❌ Resume tailoring failed.")
