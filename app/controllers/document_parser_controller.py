@@ -2,7 +2,6 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from app.services.document_parser_service import handle_document_upload
 
-
 router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
 
 @router.post("/upload", summary="Upload, parse and store the resume (PDF)")

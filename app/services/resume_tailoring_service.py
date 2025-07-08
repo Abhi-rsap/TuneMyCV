@@ -1,66 +1,34 @@
-from app.models.Resume import Resume
-from datetime import datetime
-import pytz
-from app.configs.config import timezone
+from app.db.mongo import insert_document, get_document_by_field
+from app.utils.llm import extract_keywords_from_jd, tailor_resume_from_jd
 import logging
-from app.utils.llm import generate_response
 from pydantic import ValidationError
-from motor.motor_asyncio import AsyncIOMotorClient
+async def resume_tailor_with_llm(resume_file_name: str, job_description: str, company_name: str = None, role: str = None) -> dict:
+    # Step 0: Fetch base resume from DB
+    resume_object = await get_document_by_field("documents", "filename", resume_file_name)
+    if not resume_object:
+        raise ValueError(f"No resume found with filename: {resume_file_name}")
 
-client = AsyncIOMotorClient("mongodb://localhost:27017/")
+    logging.info("✅ Resume fetched successfully from MongoDB.")
 
-db = client.resume_bot
-collection = db.tailored_documents
-base_collection = db.documents
-current_time_zone = pytz.timezone(timezone)
+    # Step 1: Extract skills from the job description
+    keywords = await extract_keywords_from_jd(job_description, model_name="llama3")
+    logging.info(f"✅ Extracted keywords: {keywords}")
 
-
-async def save_tailored_resume_to_db(tailored_resume_data: dict) -> dict:
+    # Step 2: Generate summary using skills and experience from resume
+    updated_resume_json = await tailor_resume_from_jd(keywords, job_description,resume_object["content"])
+    logging.info(f"✅ Generated summary: {updated_resume_json['summary']}")
     
-    tailored_resume_data['created_at'] = str(datetime.now(current_time_zone))
+    # Step 4: Store tailored resume
+    tailored_document = {
+        **updated_resume_json,
+        "base_resume_id": str(resume_object["_id"]),
+        "job_description": job_description,
+        "company_name": company_name,
+        "Role": role
+    }
 
-
-    # Insert the document into the MongoDB collection
-    result = await collection.insert_one(tailored_resume_data)
-    tailored_resume_data["_id"] = str(result.inserted_id)
-    if not result.acknowledged:
-        logging.error("Failed to save tailored resume data to MongoDB.")
-        raise Exception("Failed to save tailored resume data to MongoDB.")
-
-    logging.info("Tailored resume data saved successfully to MongoDB.")
-    return tailored_resume_data
-
-
-async def resume_tailor_with_llm(resume_file_name: str, job_description: str,  company_name: str = None, role: str = None) -> dict:
-    #Get json from MongoDB
     try:
-        resume_object = await base_collection.find_one({"filename": resume_file_name})
-        if not resume_object:
-            raise ValueError(f"No resume found with filename: {resume_file_name}")
-    except Exception as e:
-        logging.error(f"Error fetching resume from MongoDB: {str(e)}")
-        raise ValueError(f"Error fetching resume from MongoDB: {str(e)}")
-    
-
-    
-    logging.info("Resume fetched successfully from MongoDB.")
-    llm_response = await generate_response(resume_object['content'], job_description)
-
-    if llm_response:
-        try:
-            llm_response['base_resume_id'] = str(resume_object['_id'])
-            llm_response['job_description'] = job_description
-            llm_response['company_name'] = company_name
-            llm_response['Role'] = role
-            
-            saved_resume = await save_tailored_resume_to_db(llm_response)
-            logging.info("Tailored resume saved successfully.")
-
-            return saved_resume
-
-        except ValidationError as e:
-            print("❌ LLM response did not match the expected structure.")
-            print(e)
-    else:
-        print("❌ Resume tailoring failed.")
-
+        return await insert_document("tailored_documents", tailored_document)
+    except ValidationError as e:
+        logging.error("❌ Tailored resume did not match the expected structure.")
+        raise e
