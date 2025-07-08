@@ -1,101 +1,52 @@
-from openai import OpenAI
-from jinja2 import Template
-import json
-import re
-from app.utils.parse_resume import parse_resume
+from ollama import chat
+from app.models.Resume import Resume
 from pydantic import ValidationError
-from pydantic import BaseModel
-from typing import Optional
-from app.configs import timezone, OLLAMA_API_KEY, OLLAMA_BASE_URL
+import json
+from app.prompt_templates.extract_keyword_prompts import KEYWORDS_EXTRACTION_SYSTEM_PROMPT, KEYWORDS_EXTRACTION_USER_PROMPT
+from app.prompt_templates.tailor_resume_prompts import TAILOR_RESUME_SYSTEM_PROMPT, TAILOR_RESUME_USER_PROMPT
+    
+# --- STEP 1: Extract skills from JD --- #
+async def extract_keywords_from_jd(jd_text: str, model_name="llama3") -> str:
+    system_prompt = KEYWORDS_EXTRACTION_SYSTEM_PROMPT
 
-# Initialize Ollama client
-client = OpenAI(
-    base_url=OLLAMA_BASE_URL,
-    api_key=OLLAMA_API_KEY,
-)
+    user_prompt = KEYWORDS_EXTRACTION_USER_PROMPT.format(jd_text=jd_text)
 
-# Prompt template for tailoring
-def load_prompt_template():
-    return Template(
-        """You are a resume tailoring assistant.
-
-Given the following:
-1. A structured resume (JSON)
-2. A job description
-
-Suggest tailored improvements to the resume to make it a better match for the job. Be specific: rewrite bullet points, reword the summary, suggest new skill keywords, and remove unrelated content if necessary.
-
-🚨 Return ONLY the tailored resume in valid JSON format. Do NOT include markdown, explanation, or comments.
-
-Resume JSON:
-{{ resume }}
-
-Job Description:
-{{ jd }}"""
+    response = chat(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
     )
 
-# JSON OUTPUT FROM LLM
-def extract_json_from_llm(text: str) -> dict:
-    try:
-        # Remove markdown ```json``` if present
-        text = re.sub(r"```(json)?", "", text).strip()
+    raw_skills = response.message.content.strip()
+    # clean_skills = re.sub(r"[^\w\s,+\-#./]", "", raw_skills)
+    return raw_skills
 
-        # Try plain JSON parsing
-        return json.loads(text)
-    except json.JSONDecodeError:
-        # Try to find first valid {...} block
-        brace_count = 0
-        start = None
-        for i, c in enumerate(text):
-            if c == '{':
-                if brace_count == 0:
-                    start = i
-                brace_count += 1
-            elif c == '}':
-                brace_count -= 1
-                if brace_count == 0 and start is not None:
-                    json_str = text[start:i + 1]
-                    try:
-                        return json.loads(json_str)
-                    except json.JSONDecodeError:
-                        continue
-    return None
+# --- STEP 2: Generate summary from skills and experience --- #
+async def tailor_resume_from_jd(skills: str, job_description: str, resume_content_json, model_name="llama3") -> str:
 
-# Generate tailored resume using llama
-def generate_response(resume_dict, jd_text, model_name="mistral"):
-    prompt_template = load_prompt_template()
-    prompt = prompt_template.render(resume=json.dumps(resume_dict, indent=2), jd=jd_text)
+    system_prompt = TAILOR_RESUME_SYSTEM_PROMPT
 
-    response = client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
-        model=model_name
+    user_prompt = TAILOR_RESUME_USER_PROMPT.format(
+        job_description=job_description,
+        skills=skills,
+        resume_content_json=json.dumps(resume_content_json)
     )
 
-    result = response.choices[0].message.content
+    response = chat(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        format=Resume.model_json_schema()
+    )
 
-    tailored_resume = extract_json_from_llm(result)
-    if not tailored_resume:
-        print("❌ Failed to extract valid JSON from LLM response.")
-        print(result)
-        return None
-    return tailored_resume
-
-# Load sample job description
-jd_text = open("app/etl/sample_jd.txt", "r").read()
-
-# Get tailored response from LLM
-llm_response = generate_response(resume_json, jd_text)
-
-if llm_response:
+    response_text = response.message.content.strip()
     try:
-        # Validate with Pydantic
-        resume_obj = Resume(**llm_response)
-        tailored_resume = resume_obj.model_dump()
-        #Save
-        with open("app/etl/tailored_resume.json", "w") as f:
-            json.dump(tailored_resume, f, indent=2)
+        return json.loads(response_text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Failed to parse LLM response as JSON: {str(e)}") from e
     except ValidationError as e:
-        print("❌ LLM response did not match the expected structure.")
-        print(e)
-else:
-    print("❌ Resume tailoring failed.")
+        raise ValueError(f"LLM response did not match expected structure: {str(e)}") from e

@@ -1,6 +1,7 @@
 from unstructured.partition.pdf import partition_pdf
 import re
 import logging
+
 SECTION_HEADERS = [
     "education", 
     "experience", 
@@ -8,7 +9,7 @@ SECTION_HEADERS = [
     "projects"
 ]
 
-def segment_text(elements):
+async def segment_text(elements):
     """
     Segments parsed elements into sections based on SECTION_HEADERS.
     Returns structured dictionary.
@@ -41,18 +42,18 @@ def segment_text(elements):
     sections["summary"] = summary_line
     return sections
 
-def parse_resume(pdf_data):
+async def parse_resume(pdf_data):
     """
     Main function — parses PDF resume and writes structured JSON.
     """
     logging.info(f"Parsing resume...")
 
     # Step 1: Parse with unstructured.io
-    elements = partition_pdf(file=pdf_data)
+    elements = await partition_pdf(file=pdf_data)
     logging.info(f"Extracted {len(elements)} elements from PDF")
 
     # Step 2: Segment text
-    sections = segment_text(elements)
+    sections = await segment_text(elements)
     print(f"Segmented into {len(sections)} sections")
 
     logging.info(f"Parsed sections: {sections.keys()}")
