@@ -36,7 +36,7 @@ You'll receive a tailored resume draft that matches the job’s expectations —
 
 ### 📌 Roadmap
 
-- [✅] Build core tailoring logic using LLMs  
+- [x] Build core tailoring logic using LLMs  
 - [ ] Add multi-role tailoring support  
 - [ ] Support PDF + DOCX resume uploads  
 - [ ] Export optimized resume  
